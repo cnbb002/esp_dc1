@@ -172,42 +172,39 @@ void DC1::mqttConnected()
 void DC1::mqttDiscovery(bool isEnable)
 {
     char topic[50];
-    char message[500];
 
-    // patched: discovery 补全 uniq_id/obj_id/dev，实体可入 HA 注册表、按设备聚合
+    // patched: discovery 补全 uniq_id/obj_id/dev 及完整传感器元数据（unit/dev_cla/stat_cla），
+    // 实体可入 HA 注册表、按设备聚合且长期统计不中断。
+    // dev.sw 固定 dc1-mqtt-bridge：与 HA 端守护自动化的「规范 payload」判定一致，
+    // 固件重发 discovery 不会被守护清空重发（避免实体闪断）。
     String chNames[] = {F("总开关"), F("插孔一"), F("插孔二"), F("插孔三")};
+    String devName = F("DC1 插排");
+    if (strcmp(UID, "dc1_60246b") == 0) devName = F("客厅插排");
+    else if (strcmp(UID, "dc1_bb3e5f") == 0) devName = F("厨房插排");
+    String devJson = String(F("\"dev\":{\"ids\":[\"")) + UID +
+                     F("\"],\"name\":\"") + devName +
+                     F("\",\"mf\":\"PHICOMM\",\"mdl\":\"DC1 智能插排\",\"sw\":\"dc1-mqtt-bridge\"}}");
 
     String availability = Mqtt::getTeleTopic(F("availability"));
-    char cmndTopic[100];
-    strcpy(cmndTopic, Mqtt::getCmndTopic(F("power1")).c_str());
+    String powerStat = Mqtt::getStatTopic(F("power1"));
     for (size_t ch = 0; ch < channels; ch++)
     {
         sprintf(topic, PSTR("%s/switch/%s_%d/config"), globalConfig.mqtt.discovery_prefix, UID, (ch + 1));
         if (isEnable)
         {
-            cmndTopic[strlen(cmndTopic) - 1] = ch + 49;           // 48 + 1 + ch
-            powerStatTopic[strlen(powerStatTopic) - 1] = ch + 49; // 48 + 1 + ch
-            sprintf(message,
-                    PSTR("{\"name\":\"%s\","
-                         "\"cmd_t\":\"%s\","
-                         "\"stat_t\":\"%s\","
-                         "\"pl_off\":\"off\","
-                         "\"pl_on\":\"on\","
-                         "\"avty_t\":\"%s\","
-                         "\"pl_avail\":\"online\","
-                         "\"pl_not_avail\":\"offline\","
-                         "\"uniq_id\":\"%s_%d\","
-                         "\"obj_id\":\"%s_%d\","
-                         "\"dev\":{\"ids\":[\"%s\"],\"name\":\"DC1 插排\",\"mf\":\"PHICOMM\",\"mdl\":\"DC1 智能插排\",\"sw\":\"esp_dc1\"}}"),
-                    chNames[ch].c_str(),
-                    cmndTopic,
-                    powerStatTopic,
-                    availability.c_str(),
-                    UID, (ch + 1),
-                    UID, (ch + 1),
-                    UID);
-            Mqtt::publish(topic, message, true);
-            //Debug::AddInfo(PSTR("discovery: %s - %s"), topic, message);
+            String cmnd = Mqtt::getCmndTopic(F("power1"));
+            cmnd[cmnd.length() - 1] = ch + 49;
+            String stat = powerStat;
+            stat[stat.length() - 1] = ch + 49;
+            String msg = String(F("{\"name\":\"")) + chNames[ch] +
+                         F("\",\"cmd_t\":\"") + cmnd +
+                         F("\",\"stat_t\":\"") + stat +
+                         F("\",\"pl_off\":\"off\",\"pl_on\":\"on\"") +
+                         F(",\"avty_t\":\"") + availability +
+                         F("\",\"pl_avail\":\"online\",\"pl_not_avail\":\"offline\"") +
+                         F(",\"uniq_id\":\"") + UID + "_" + (ch + 1) +
+                         F("\",\"obj_id\":\"") + UID + "_" + (ch + 1) + F("\",") + devJson;
+            Mqtt::publish(topic, msg.c_str(), true);
         }
         else
         {
@@ -226,52 +223,18 @@ void DC1::mqttDiscovery(bool isEnable)
         sprintf(topic, PSTR("%s/sensor/%s_%s/config"), globalConfig.mqtt.discovery_prefix, UID, tims[i].c_str());
         if (isEnable)
         {
-            if (tims2[i].length() == 0)
-            {
-                sprintf(message,
-                        PSTR("{\"name\":\"%s\","
-                             "\"stat_t\":\"%s\","
-                             "\"val_tpl\":\"{{value_json.%s}}\","
-                             "\"uniq_id\":\"%s_%s\","
-                             "\"obj_id\":\"%s_%s\","
-                             "\"dev\":{\"ids\":[\"%s\"],\"name\":\"DC1 插排\",\"mf\":\"PHICOMM\",\"mdl\":\"DC1 智能插排\",\"sw\":\"esp_dc1\"}}"),
-                        sNames[i].c_str(), energy.c_str(), tims[i].c_str(),
-                        UID, tims[i].c_str(), UID, tims[i].c_str(), UID);
-            }
-            else
-            {
-                if (tims3[i].length() == 0)
-                {
-                    sprintf(message,
-                            PSTR("{\"name\":\"%s\","
-                                 "\"stat_t\":\"%s\","
-                                 "\"val_tpl\":\"{{value_json.%s}}\","
-                                 "\"unit_of_meas\":\"%s\","
-                                 "\"uniq_id\":\"%s_%s\","
-                                 "\"obj_id\":\"%s_%s\","
-                                 "\"dev\":{\"ids\":[\"%s\"],\"name\":\"DC1 插排\",\"mf\":\"PHICOMM\",\"mdl\":\"DC1 智能插排\",\"sw\":\"esp_dc1\"}}"),
-                            sNames[i].c_str(), energy.c_str(), tims[i].c_str(), tims2[i].c_str(),
-                            UID, tims[i].c_str(), UID, tims[i].c_str(), UID);
-                }
-                else
-                {
-                    sprintf(message,
-                            PSTR("{\"name\":\"%s\","
-                                 "\"stat_t\":\"%s\","
-                                 "\"val_tpl\":\"{{value_json.%s}}\","
-                                 "\"unit_of_meas\":\"%s\","
-                                 "\"dev_cla\":\"%s\","
-                                 "\"stat_cla\":\"%s\","
-                                 "\"uniq_id\":\"%s_%s\","
-                                 "\"obj_id\":\"%s_%s\","
-                                 "\"dev\":{\"ids\":[\"%s\"],\"name\":\"DC1 插排\",\"mf\":\"PHICOMM\",\"mdl\":\"DC1 智能插排\",\"sw\":\"esp_dc1\"}}"),
-                            sNames[i].c_str(), energy.c_str(), tims[i].c_str(), tims2[i].c_str(),
-                            tims3[i].c_str(), tims4[i].c_str(),
-                            UID, tims[i].c_str(), UID, tims[i].c_str(), UID);
-                }
-            }
-            Mqtt::publish(topic, message, true);
-            //Debug::AddInfo(PSTR("discovery: %s - %s"), topic, message);
+            String msg = String(F("{\"name\":\"")) + sNames[i] +
+                         F("\",\"stat_t\":\"") + energy +
+                         F("\",\"val_tpl\":\"{{value_json.") + tims[i] +
+                         F("}}\",\"uniq_id\":\"") + UID + "_" + tims[i] +
+                         F("\",\"obj_id\":\"") + UID + "_" + tims[i] + F("\"");
+            if (tims2[i].length() > 0)
+                msg += String(F(",\"unit_of_meas\":\"")) + tims2[i] + F("\"");
+            if (tims3[i].length() > 0)
+                msg += String(F(",\"dev_cla\":\"")) + tims3[i] + F("\",\"stat_cla\":\"") + tims4[i] + F("\"");
+            msg += F(",");
+            msg += devJson;
+            Mqtt::publish(topic, msg.c_str(), true);
         }
         else
         {
